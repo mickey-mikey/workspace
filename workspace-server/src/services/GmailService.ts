@@ -745,13 +745,15 @@ export class GmailService {
       if (!payload.filename || !payload.body.attachmentId) {
         if (payload.mimeType?.startsWith('text/')) {
           if (payload.mimeType === 'text/plain' && !result.textBody) {
-            result.textBody = Buffer.from(payload.body.data, 'base64').toString(
-              'utf-8',
-            );
+            result.textBody = Buffer.from(
+              payload.body.data,
+              'base64url',
+            ).toString('utf-8');
           } else if (payload.mimeType === 'text/html' && !result.htmlBody) {
-            result.htmlBody = Buffer.from(payload.body.data, 'base64').toString(
-              'utf-8',
-            );
+            result.htmlBody = Buffer.from(
+              payload.body.data,
+              'base64url',
+            ).toString('utf-8');
           }
         }
       }

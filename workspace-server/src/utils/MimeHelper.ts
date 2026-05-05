@@ -258,7 +258,7 @@ export class MimeHelper {
       return `\r\n\r\n${attribution}`;
     }
 
-    const lines = originalBody.split('\n').map((line) => `> ${line}`);
+    const lines = originalBody.split(/\r?\n/).map((line) => `> ${line}`);
     return `\r\n\r\n${attribution}\r\n${lines.join('\r\n')}`;
   }
 }
