@@ -822,6 +822,9 @@ describe('GmailService', () => {
       (MimeHelper.createMimeMessage as jest.Mock) = jest
         .fn()
         .mockReturnValue('base64encodedmessage');
+      (MimeHelper.buildQuotedBlock as jest.Mock) = jest
+        .fn()
+        .mockReturnValue('\r\n\r\nQUOTED_BLOCK');
     });
 
     it('should create a draft email', async () => {
@@ -993,6 +996,308 @@ describe('GmailService', () => {
 
       const response = JSON.parse(result.content[0].text);
       expect(response.status).toBe('draft_created');
+    });
+
+    it('should fetch quoted message and append quote block to body', async () => {
+      const mockDraft = { id: 'draft1', message: { id: 'msg1', threadId: 'thread1' } };
+      mockGmailAPI.users.drafts.create.mockResolvedValue({ data: mockDraft });
+
+      mockGmailAPI.users.threads.get.mockResolvedValue({
+        data: {
+          messages: [
+            {
+              id: 'msg1',
+              payload: {
+                headers: [
+                  { name: 'Message-ID', value: '<msg1@example.com>' },
+                  { name: 'From', value: 'original@example.com' },
+                  { name: 'Date', value: 'Mon, 5 May 2026 10:00:00 +0000' },
+                  { name: 'References', value: '<ref1@example.com>' },
+                ],
+                parts: [
+                  {
+                    mimeType: 'text/plain',
+                    body: {
+                      data: Buffer.from('Original message body').toString('base64'),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      const result = await gmailService.createDraft({
+        to: 'recipient@example.com',
+        subject: 'Re: Test',
+        body: 'My reply',
+        threadId: 'thread1',
+        quoteOriginal: true,
+      });
+
+      expect(mockGmailAPI.users.threads.get).toHaveBeenCalledWith(
+        expect.objectContaining({
+          format: 'full',
+        }),
+      );
+
+      expect(MimeHelper.buildQuotedBlock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          originalBody: 'Original message body',
+          from: 'original@example.com',
+          date: 'Mon, 5 May 2026 10:00:00 +0000',
+          isHtml: false,
+        }),
+      );
+
+      expect(MimeHelper.createMimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: 'My reply\r\n\r\nQUOTED_BLOCK',
+        }),
+      );
+
+      const response = JSON.parse(result.content[0].text);
+      expect(response.status).toBe('draft_created');
+    });
+
+    it('should prefer text/plain body for plain-text drafts when both exist', async () => {
+      const mockDraft = { id: 'draft1', message: { id: 'msg1', threadId: 'thread1' } };
+      mockGmailAPI.users.drafts.create.mockResolvedValue({ data: mockDraft });
+
+      mockGmailAPI.users.threads.get.mockResolvedValue({
+        data: {
+          messages: [
+            {
+              id: 'msg1',
+              payload: {
+                headers: [
+                  { name: 'From', value: 'sender@example.com' },
+                  { name: 'Date', value: 'Date' },
+                ],
+                parts: [
+                  {
+                    mimeType: 'text/plain',
+                    body: { data: Buffer.from('Plain text').toString('base64') },
+                  },
+                  {
+                    mimeType: 'text/html',
+                    body: { data: Buffer.from('<p>HTML</p>').toString('base64') },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      await gmailService.createDraft({
+        to: 'test@example.com',
+        subject: 'Test',
+        body: 'Reply',
+        threadId: 'thread1',
+        quoteOriginal: true,
+      });
+
+      expect(MimeHelper.buildQuotedBlock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          originalBody: 'Plain text',
+        }),
+      );
+    });
+
+    it('should fall back to stripped HTML when only HTML body available for plain-text draft', async () => {
+      const mockDraft = { id: 'draft1', message: { id: 'msg1', threadId: 'thread1' } };
+      mockGmailAPI.users.drafts.create.mockResolvedValue({ data: mockDraft });
+      mockGmailAPI.users.threads.get.mockResolvedValue({
+        data: {
+          messages: [
+            {
+              id: 'msg1',
+              payload: {
+                headers: [
+                  { name: 'From', value: 'sender@example.com' },
+                  { name: 'Date', value: 'Test Date' },
+                  { name: 'Message-ID', value: '<msg1@example.com>' },
+                ],
+                parts: [
+                  {
+                    mimeType: 'text/html',
+                    body: {
+                      data: Buffer.from('<p>HTML content</p>').toString('base64'),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      await gmailService.createDraft({
+        to: 'test@example.com',
+        subject: 'Test',
+        body: 'Reply',
+        threadId: 'thread1',
+        quoteOriginal: true,
+        isHtml: false,
+      });
+
+      expect(MimeHelper.createMimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining('Reply'),
+        }),
+      );
+    });
+
+    it('should prefer text/html body for HTML drafts', async () => {
+      const mockDraft = { id: 'draft1', message: { id: 'msg1', threadId: 'thread1' } };
+      mockGmailAPI.users.drafts.create.mockResolvedValue({ data: mockDraft });
+
+      mockGmailAPI.users.threads.get.mockResolvedValue({
+        data: {
+          messages: [
+            {
+              id: 'msg1',
+              payload: {
+                headers: [
+                  { name: 'From', value: 'sender@example.com' },
+                  { name: 'Date', value: 'Date' },
+                ],
+                parts: [
+                  {
+                    mimeType: 'text/plain',
+                    body: { data: Buffer.from('Plain').toString('base64') },
+                  },
+                  {
+                    mimeType: 'text/html',
+                    body: { data: Buffer.from('<p>HTML</p>').toString('base64') },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      await gmailService.createDraft({
+        to: 'test@example.com',
+        subject: 'Test',
+        body: 'Reply',
+        threadId: 'thread1',
+        quoteOriginal: true,
+        isHtml: true,
+      });
+
+      expect(MimeHelper.buildQuotedBlock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          originalBody: '<p>HTML</p>',
+          isHtml: true,
+        }),
+      );
+    });
+
+    it('should gracefully degrade if quoted message fetch fails', async () => {
+      const mockDraft = { id: 'draft1', message: { id: 'msg1', threadId: 'thread1' } };
+      mockGmailAPI.users.drafts.create.mockResolvedValue({ data: mockDraft });
+
+      mockGmailAPI.users.threads.get.mockRejectedValue(new Error('Failed to fetch'));
+
+      const result = await gmailService.createDraft({
+        to: 'test@example.com',
+        subject: 'Test',
+        body: 'Reply body',
+        threadId: 'thread1',
+        quoteOriginal: true,
+      });
+
+      expect(MimeHelper.createMimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: 'Reply body',
+        }),
+      );
+
+      const response = JSON.parse(result.content[0].text);
+      expect(response.status).toBe('draft_created');
+    });
+
+    it('should work with both threadId and quoteOriginal simultaneously', async () => {
+      const mockDraft = { id: 'draft1', message: { id: 'msg1', threadId: 'thread1' } };
+      mockGmailAPI.users.drafts.create.mockResolvedValue({ data: mockDraft });
+
+      mockGmailAPI.users.threads.get.mockResolvedValue({
+        data: {
+          messages: [
+            {
+              id: 'msg1',
+              payload: {
+                headers: [
+                  { name: 'Message-ID', value: '<msg1@example.com>' },
+                  { name: 'From', value: 'sender@example.com' },
+                  { name: 'Date', value: 'Date' },
+                  { name: 'References', value: '<ref@example.com>' },
+                ],
+                parts: [
+                  {
+                    mimeType: 'text/plain',
+                    body: { data: Buffer.from('Original').toString('base64') },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      await gmailService.createDraft({
+        to: 'test@example.com',
+        subject: 'Re: Test',
+        body: 'Reply',
+        threadId: 'thread1',
+        quoteOriginal: true,
+      });
+
+      expect(MimeHelper.createMimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inReplyTo: '<msg1@example.com>',
+          references: '<ref@example.com> <msg1@example.com>',
+          body: 'Reply\r\n\r\nQUOTED_BLOCK',
+        }),
+      );
+    });
+
+    it('should not fetch full thread when quoteOriginal is false or absent', async () => {
+      const mockDraft = { id: 'draft1', message: { id: 'msg1', threadId: 'thread1' } };
+      mockGmailAPI.users.drafts.create.mockResolvedValue({ data: mockDraft });
+
+      mockGmailAPI.users.threads.get.mockResolvedValue({
+        data: {
+          messages: [
+            {
+              id: 'msg1',
+              payload: {
+                headers: [
+                  { name: 'Message-ID', value: '<msg1@example.com>' },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      await gmailService.createDraft({
+        to: 'test@example.com',
+        subject: 'Test',
+        body: 'Body',
+        threadId: 'thread1',
+      });
+
+      expect(mockGmailAPI.users.threads.get).toHaveBeenCalledWith(
+        expect.objectContaining({
+          format: 'metadata',
+          metadataHeaders: ['Message-ID', 'References'],
+        }),
+      );
     });
   });
 

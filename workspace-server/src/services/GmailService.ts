@@ -30,6 +30,7 @@ type SendEmailParams = {
 
 type CreateDraftParams = SendEmailParams & {
   threadId?: string;
+  quoteOriginal?: boolean;
 };
 
 interface GmailAttachment {
@@ -491,26 +492,28 @@ export class GmailService {
     bcc,
     isHtml = false,
     threadId,
+    quoteOriginal,
   }: CreateDraftParams) => {
     try {
       logToFile(`Creating draft - to: ${to}, subject: ${subject}`);
 
       const gmail = await this.getGmailClient();
 
-      // If threadId is provided, fetch the last message to get reply headers
+      // If threadId is provided, fetch the last message to get reply headers (and body if quoting)
       let inReplyTo: string | undefined;
       let references: string | undefined;
+      let lastMessage: gmail_v1.Schema$Message | undefined;
       if (threadId) {
         try {
           const threadResponse = await gmail.users.threads.get({
             userId: 'me',
             id: threadId,
-            format: 'metadata',
-            metadataHeaders: ['Message-ID', 'References'],
+            format: quoteOriginal ? 'full' : 'metadata',
+            ...(quoteOriginal ? {} : { metadataHeaders: ['Message-ID', 'References'] }),
           });
           const messages = threadResponse.data.messages || [];
           if (messages.length > 0) {
-            const lastMessage = messages[messages.length - 1];
+            lastMessage = messages[messages.length - 1];
             const headers = lastMessage.payload?.headers || [];
             const messageIdHeader = headers.find(
               (h) => h.name?.toLowerCase() === 'message-id',
@@ -533,11 +536,31 @@ export class GmailService {
         }
       }
 
+      // Build final body, including quote if requested
+      let finalBody = body;
+      if (quoteOriginal && lastMessage?.payload) {
+        const headers = lastMessage.payload.headers || [];
+        const from = headers.find((h) => h.name?.toLowerCase() === 'from')?.value ?? '';
+        const date = headers.find((h) => h.name?.toLowerCase() === 'date')?.value ?? '';
+        const { textBody, htmlBody } = this.extractTextAndHtmlBodies(lastMessage.payload);
+
+        let originalBody: string | null = null;
+        if (isHtml) {
+          originalBody = htmlBody ?? (textBody ? `<pre>${textBody}</pre>` : null);
+        } else {
+          originalBody = textBody ?? (htmlBody ? MimeHelper.stripHtmlTags(htmlBody) : null);
+        }
+
+        if (originalBody) {
+          finalBody = body + MimeHelper.buildQuotedBlock({ originalBody, from, date, isHtml });
+        }
+      }
+
       // Create MIME message
       const mimeMessage = MimeHelper.createMimeMessage({
         to: Array.isArray(to) ? to.join(', ') : to,
         subject,
-        body,
+        body: finalBody,
         cc: cc ? (Array.isArray(cc) ? cc.join(', ') : cc) : undefined,
         bcc: bcc ? (Array.isArray(bcc) ? bcc.join(', ') : bcc) : undefined,
         isHtml,
@@ -706,6 +729,42 @@ export class GmailService {
       return this.handleError(error, 'gmail.createLabel');
     }
   };
+
+  private extractTextAndHtmlBodies(
+    payload: gmail_v1.Schema$MessagePart,
+    result: { textBody: string | null; htmlBody: string | null } = {
+      textBody: null,
+      htmlBody: null,
+    },
+  ): { textBody: string | null; htmlBody: string | null } {
+    if (!payload) return result;
+
+    // Handle body parts
+    if (payload.body?.data) {
+      // If it's the main body (and not an attachment)
+      if (!payload.filename || !payload.body.attachmentId) {
+        if (payload.mimeType?.startsWith('text/')) {
+          if (payload.mimeType === 'text/plain' && !result.textBody) {
+            result.textBody = Buffer.from(payload.body.data, 'base64').toString(
+              'utf-8',
+            );
+          } else if (payload.mimeType === 'text/html' && !result.htmlBody) {
+            result.htmlBody = Buffer.from(payload.body.data, 'base64').toString(
+              'utf-8',
+            );
+          }
+        }
+      }
+    }
+
+    // Recurse into parts
+    if (payload.parts) {
+      for (const part of payload.parts) {
+        this.extractTextAndHtmlBodies(part, result);
+      }
+    }
+    return result;
+  }
 
   private extractAttachmentsAndBody(
     payload: gmail_v1.Schema$MessagePart,

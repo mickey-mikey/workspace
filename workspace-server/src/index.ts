@@ -1299,6 +1299,12 @@ System labels that can be modified:
           .describe(
             'The thread ID to create the draft as a reply to. When provided, the draft will be linked to the existing thread with appropriate reply headers.',
           ),
+        quoteOriginal: z
+          .boolean()
+          .optional()
+          .describe(
+            'When true and threadId is provided, fetches the last message in the thread and appends it as a formatted quote block. Plain-text drafts use "> " line prefixes; HTML drafts use a Gmail-style blockquote.',
+          ),
       },
     },
     gmailService.createDraft,

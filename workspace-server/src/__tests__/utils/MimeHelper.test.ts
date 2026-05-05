@@ -415,4 +415,132 @@ describe('MimeHelper', () => {
       expect(decoded).toContain('Test body');
     });
   });
+
+  describe('buildQuotedBlock', () => {
+    it('should format a plain-text quoted block with attribution and > prefix', () => {
+      const originalBody = 'Line 1\nLine 2\nLine 3';
+      const from = 'sender@example.com';
+      const date = 'Mon, 5 May 2026 10:00:00 +0000';
+
+      const result = MimeHelper.buildQuotedBlock({
+        originalBody,
+        from,
+        date,
+        isHtml: false,
+      });
+
+      expect(result).toContain(`On ${date}, ${from} wrote:`);
+      expect(result).toContain('> Line 1');
+      expect(result).toContain('> Line 2');
+      expect(result).toContain('> Line 3');
+      expect(result).toMatch(/\r\n\r\nOn/);
+    });
+
+    it('should handle empty body in plain-text mode', () => {
+      const from = 'sender@example.com';
+      const date = 'Mon, 5 May 2026 10:00:00 +0000';
+
+      const result = MimeHelper.buildQuotedBlock({
+        originalBody: '',
+        from,
+        date,
+        isHtml: false,
+      });
+
+      expect(result).toContain(`On ${date}, ${from} wrote:`);
+      expect(result).not.toMatch(/> /);
+    });
+
+    it('should preserve all lines in multiline plain-text body', () => {
+      const originalBody = 'First\nSecond\nThird\nFourth\nFifth';
+      const from = 'test@example.com';
+      const date = 'Date';
+
+      const result = MimeHelper.buildQuotedBlock({
+        originalBody,
+        from,
+        date,
+        isHtml: false,
+      });
+
+      expect(result).toContain('> First');
+      expect(result).toContain('> Second');
+      expect(result).toContain('> Third');
+      expect(result).toContain('> Fourth');
+      expect(result).toContain('> Fifth');
+    });
+
+    it('should format an HTML quoted block with blockquote and attribution', () => {
+      const originalBody = '<p>HTML content</p>';
+      const from = 'sender@example.com';
+      const date = 'Mon, 5 May 2026 10:00:00 +0000';
+
+      const result = MimeHelper.buildQuotedBlock({
+        originalBody,
+        from,
+        date,
+        isHtml: true,
+      });
+
+      expect(result).toContain('class="gmail_quote"');
+      expect(result).toContain('<blockquote');
+      expect(result).toContain(originalBody);
+      expect(result).toContain(`On ${date}, ${from} wrote:`);
+    });
+
+    it('should use <br> separator in HTML mode, not CRLF', () => {
+      const originalBody = 'content';
+      const from = 'sender@example.com';
+      const date = 'Date';
+
+      const result = MimeHelper.buildQuotedBlock({
+        originalBody,
+        from,
+        date,
+        isHtml: true,
+      });
+
+      expect(result).toContain('<br>');
+      expect(result).not.toMatch(/\r\n\r\nOn/);
+    });
+  });
+
+  describe('stripHtmlTags', () => {
+    it('should strip basic HTML tags', () => {
+      const html = '<p>Hello <b>world</b></p>';
+      const result = MimeHelper.stripHtmlTags(html);
+
+      expect(result).toBe('Hello world');
+      expect(result).not.toContain('<');
+      expect(result).not.toContain('>');
+    });
+
+    it('should convert <br> tags to newlines', () => {
+      const html = 'Line 1<br>Line 2<br/>Line 3';
+      const result = MimeHelper.stripHtmlTags(html);
+
+      expect(result).toContain('Line 1\nLine 2\nLine 3');
+    });
+
+    it('should convert </p> tags to newlines', () => {
+      const html = '<p>Para 1</p><p>Para 2</p>';
+      const result = MimeHelper.stripHtmlTags(html);
+
+      expect(result).toContain('Para 1\nPara 2');
+    });
+
+    it('should decode HTML entities', () => {
+      const html = 'Hello &amp; goodbye &lt;test&gt; &quot;quoted&quot; &nbsp; space';
+      const result = MimeHelper.stripHtmlTags(html);
+
+      expect(result).toContain('Hello & goodbye <test> "quoted"');
+    });
+
+    it('should collapse excessive newlines', () => {
+      const html = 'Line1\n\n\n\nLine2';
+      const result = MimeHelper.stripHtmlTags(html);
+
+      expect(result).toBe('Line1\n\nLine2');
+    });
+  });
 });

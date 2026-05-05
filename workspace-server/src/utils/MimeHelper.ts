@@ -210,4 +210,55 @@ export class MimeHelper {
     }
     return Buffer.from(base64, 'base64').toString('utf-8');
   }
+
+  /**
+   * Strips HTML tags from a string, decoding common entities
+   */
+  public static stripHtmlTags(html: string): string {
+    return html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  /**
+   * Builds a quoted block for a reply, formatting based on content type
+   */
+  public static buildQuotedBlock({
+    originalBody,
+    from,
+    date,
+    isHtml = false,
+  }: {
+    originalBody: string;
+    from: string;
+    date: string;
+    isHtml?: boolean;
+  }): string {
+    const attribution = `On ${date}, ${from} wrote:`;
+
+    if (isHtml) {
+      return (
+        `<br><div class="gmail_quote">` +
+        `${attribution}<br>` +
+        `<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex">` +
+        `${originalBody}` +
+        `</blockquote></div>`
+      );
+    }
+
+    if (!originalBody.trim()) {
+      return `\r\n\r\n${attribution}`;
+    }
+
+    const lines = originalBody.split('\n').map((line) => `> ${line}`);
+    return `\r\n\r\n${attribution}\r\n${lines.join('\r\n')}`;
+  }
 }
